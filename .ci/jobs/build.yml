@@ -1,0 +1,99 @@
+# ─────────────────────────────────────────────
+#  .ci/jobs/build.yml
+#  Stages: build
+# ─────────────────────────────────────────────
+ 
+# Passes the right compose file as an artifact to downstream deploy jobs.
+prepare_compose:
+  stage: build
+  needs: []
+  image: alpine:3.23.3
+  script:
+    - echo "Passing compose file as artifact"
+    - ls -la
+  artifacts:
+    paths:
+      - $COMPOSE
+    expire_in: 1 hour
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      variables:
+        COMPOSE: compose-preview.yml
+    - when: always
+      variables:
+        COMPOSE: compose-prod.yml
+  interruptible: true 
+ 
+# Skipped for feature-frontend/* and feature-nginx/* branches.
+build_backend:
+  needs: []
+  stage: build
+  image: $CI_REGISTRY_IMAGE/images:dotnet_latest
+  before_script:
+    - !reference [.tpl_extract_service, script]
+  script:
+    - chmod +x build_script.sh
+    - |
+      if [ -n "$IS_BACKEND" ] && [ -n "$SERVICE_NAME" ]; then
+        BUILD_SERVICE="$SERVICE_NAME" ./build_script.sh
+      else
+        ./build_script.sh
+      fi
+  cache:
+    key: $KEY1
+    paths:
+      - "$NUGET_PACKAGES"
+    policy: pull-push
+  artifacts:
+    paths:
+      - publish/
+      - Dockerfile.backend
+      - Dockerfile.storage
+    when: on_success
+    access: none
+    expire_in: 1 hour
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
+      when: never
+    - if: '$CI_COMMIT_REF_NAME !~ /^feature-(frontend|nginx)-.+/'
+
+  interruptible: true
+
+  
+# Skipped for pure backend feature branches.
+build_frontend:
+  needs: []
+  stage: build
+  image: ${CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX}/node:22-alpine
+  script:
+    - npm install --prefix frontend
+    - npm run build --prefix frontend
+  cache:
+    key: $KEY2
+    paths:
+      - frontend/node_modules
+  artifacts:
+    paths:
+      - frontend/build/
+      - frontend/package.json
+      - Dockerfile.frontend
+      - Dockerfile.nginx
+      - $NGINXCONF
+    when: on_success
+    access: none
+    expire_in: 1 hour
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
+      when: never
+    - if: '$CI_COMMIT_REF_NAME =~ /^feature-(auth|albums|tags|user-profiles|voki-comments|voki-ratings|vokis-catalog|core-voki-creation|general-voki-creation|general-voki-taking|storage|db-seeder)-[^-]+/'
+      when: never
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      variables:
+        NGINXCONF: nginx-prod.conf
+    - when: always
+      variables:
+        NGINXCONF: nginx-preview.conf
+        
+  interruptible: true

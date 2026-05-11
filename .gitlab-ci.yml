@@ -1,0 +1,36 @@
+# ─────────────────────────────────────────────
+#  Main CI entry point
+#  All logic lives in .ci/ — edit there.
+# ─────────────────────────────────────────────
+ 
+include:
+  - local: .ci/templates.yml
+  - local: .ci/jobs/build.yml
+  - local: .ci/jobs/docker.yml
+  - local: .ci/jobs/test.yml
+  - local: .ci/jobs/deploy.yml
+ 
+# ── Pipeline trigger rules ──────────────────
+workflow:
+  auto_cancel:
+    on_new_commit: interruptible
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_COMMIT_REF_NAME =~ /^feature-.+-[^-]+$/'
+    - when: never
+ 
+# ── Stages ──────────────────────────────────
+stages:
+  - pre_detect
+  - images_init
+  - build
+  - test
+  - build_docker
+  - preview
+  - production
+ 
+# ── Global variables ────────────────────────
+variables:
+  NUGET_PACKAGES: "$CI_PROJECT_DIR/.nuget/packages"
+  KEY1: cache-backend-$CI_COMMIT_REF_SLUG
+  KEY2: cache-frontend-$CI_COMMIT_REF_SLUG

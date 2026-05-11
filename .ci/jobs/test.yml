@@ -1,0 +1,173 @@
+# ─────────────────────────────────────────────
+#  .ci/jobs/test.yml
+#  Stage: pre_detect, test
+#  Gitleaks for finding 
+# ─────────────────────────────────────────────
+
+gitleaks:
+  needs: []
+  stage: pre_detect
+
+  variables:
+    GIT_DEPTH: 100
+
+  image:
+    name: ${CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX}/zricethezav/gitleaks:v8.30.1
+    entrypoint: [""]
+  script:
+    - gitleaks detect --source . --report-format sarif --report-path gitleaks-report.sarif
+
+  artifacts:
+    when: always
+    paths:
+      - gitleaks-report.sarif
+    reports:
+      sast: gitleaks-report.sarif
+    expire_in: 1 day
+
+  allow_failure: true
+  interruptible: true
+
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
+      when: never
+    - when: always
+
+trivy_image_scan:
+  needs: []
+  stage: pre_detect
+  image:
+    name: aquasec/trivy:canary
+    entrypoint: [""]
+  variables:
+    TRIVY_NO_PROGRESS: "true"
+    TRIVY_CACHE_DIR: ".trivycache/"
+    GIT_STRATEGY: none
+
+  cache:
+    paths:
+      - .trivycache/
+
+  before_script:
+    - !reference [.tpl_extract_service, script]
+
+  script:
+    - |
+      if [ -z "$SERVICE_NAME" ]; then
+        SERVICES_TO_SCAN="auth albums tags user-profiles voki-comments voki-ratings vokis-catalog core-voki-creation general-voki-creation general-voki-taking storage db-seeder frontend nginx"
+      else
+        SERVICES_TO_SCAN="$SERVICE_NAME"
+      fi
+
+      echo "$CI_REGISTRY_PASSWORD" | trivy registry login \
+        --username "$CI_REGISTRY_USER" \
+        --password-stdin $CI_REGISTRY
+
+      wget -O gitlab.tpl https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/gitlab.tpl
+
+      for SERVICE in $SERVICES_TO_SCAN; do
+        echo "=== Scanning $SERVICE ==="
+        trivy image \
+          --severity HIGH,CRITICAL \
+          --ignore-unfixed \
+          --format template \
+          --template "@gitlab.tpl" \
+          -o "gl-container-scanning-report-$SERVICE.json" \
+          "$CI_REGISTRY_IMAGE/$SERVICE:$CI_COMMIT_REF_SLUG" || true
+      done
+
+  artifacts:
+    reports:
+      container_scanning: gl-container-scanning-report.json
+
+  allow_failure: true
+  interruptible: true
+
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: always
+      
+    - when: never
+
+
+.sonar_mr:
+  stage: test
+  inherit:
+    variables: false
+  image: $CI_REGISTRY_IMAGE/images:dotnet_latest
+  needs:
+    - job: build_backend
+      artifacts: false
+  variables:
+    SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"
+    GIT_DEPTH: "0"
+  cache:
+    - key: sonar-cache-$CI_COMMIT_REF_SLUG
+      paths:
+        - "${SONAR_USER_HOME}/cache"
+        - sonar-scanner/
+      policy: pull-push
+    - key: $KEY1
+      paths:
+        - $NUGET_PACKAGES
+      policy: pull
+  script:
+    - dotnet tool install --global dotnet-sonarscanner
+    - export PATH="$PATH:$HOME/.dotnet/tools"
+    - |
+      dotnet sonarscanner begin \
+        /k:"voki1_voki_app_project_d2d2b433-728b-49f0-af97-eb3742ea4ff8" \
+        /d:sonar.token="$SONAR_TOKEN" \
+        /d:sonar.host.url="$SONAR_HOST_URL" \
+        /d:sonar.pullrequest.key="$CI_MERGE_REQUEST_IID" \
+        /d:sonar.pullrequest.branch="$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME" \
+        /d:sonar.pullrequest.base="$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+    - dotnet build backend/backend.sln
+    - dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
+  allow_failure: true
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
+      when: never
+    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
+
+  interruptible: true
+
+# ── SonarQube — main branch analysis ────────
+.sonar_main:
+  stage: test
+  inherit:
+    variables: false
+  image: $CI_REGISTRY_IMAGE/images:dotnet_latest
+  needs:
+    - job: build_backend
+      artifacts: false
+  variables:
+    SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"
+    GIT_DEPTH: "0"
+  cache:
+    - key: sonar-cache-main
+      paths:
+        - "${SONAR_USER_HOME}/cache"
+        - sonar-scanner/
+      policy: pull-push
+    - key: $KEY1
+      paths:
+        - $NUGET_PACKAGES
+      policy: pull
+  script:
+    - dotnet tool install --global dotnet-sonarscanner
+    - export PATH="$PATH:$HOME/.dotnet/tools"
+    - |
+      dotnet sonarscanner begin \
+        /k:"voki1_voki_app_project_d2d2b433-728b-49f0-af97-eb3742ea4ff8" \
+        /d:sonar.token="$SONAR_TOKEN" \
+        /d:sonar.host.url="$SONAR_HOST_URL"
+    - dotnet build backend/backend.sln
+    - dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
+  allow_failure: true
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
+      when: never
+    - if: $CI_COMMIT_BRANCH == 'main'
+    
+  interruptible: true

@@ -1,0 +1,282 @@
+# ─────────────────────────────────────────────
+#  .ci/jobs/deploy.yml
+# ─────────────────────────────────────────────
+
+
+# ── Utility jobs ────────────────────────────
+
+# Pulls a new base .NET image 
+# Triggered manually from the web UI with $DOTNET set to the desired image.
+init_images:
+  needs: []
+  stage: images_init
+  image: ${CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX}/docker:29.3.1-cli-alpine3.23
+  services:
+    - ${CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX}/docker:29.3.1-dind-alpine3.23
+  variables:
+    GIT_STRATEGY: none
+  script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
+    - |
+      if [ -n "$DOTNET" ]; then
+        echo "Pulling $DOTNET"
+        docker pull "$DOTNET"
+        docker tag "$DOTNET" "$CI_REGISTRY_IMAGE/images:dotnet_latest"
+        docker push "$CI_REGISTRY_IMAGE/images:dotnet_latest"
+      else
+        echo "DOTNET not set, skipping"
+      fi
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
+
+# ── Preview environment ──────────────────────
+
+deploy_preview:
+
+  variables:
+    GIT_STRATEGY: none
+
+  retry: 2
+  resource_group: preview_deploy-$CI_COMMIT_REF_SLUG
+  stage: preview
+  image: alpine:3.23.3
+  needs:
+    - job: docker_build_frontend
+      artifacts: false
+      optional: true
+    - job: docker_build_backend
+      artifacts: false
+      optional: true
+    - job: prepare_compose
+      artifacts: true
+  variables:
+    DEPLOY_DIR: $BASE_DIR_PATH/preview/$CI_COMMIT_REF_SLUG
+    PREVIEW_USER: $GITLAB_USER_LOGIN
+    PREVIEW_PASS: $CI_COMMIT_SHORT_SHA
+    DEPLOY_NETWORK_NAME: preview_deploy
+    NETWORK_NAME: preview-$CI_COMMIT_REF_SLUG
+    FRONTEND_URL: https://$CI_COMMIT_SHORT_SHA.$DOMAIN
+    # Preview uses lightweight local infrastructure
+
+    POSTGRES_PASSWORD: postgres
+    POSTGRES_USER: postgres
+
+    RABBITMQ_USER: user
+    RABBITMQ_PASSWORD: password
+
+    S3_ACCESS_KEY: minio
+    S3_SECRET_KEY: minio123
+    S3_SERVICE_URL: http://minio:9000
+
+
+  before_script:
+    - !reference [.tpl_ssh_setup, script]
+    # Ensure oldest-first queue ordering for this resource group
+    - |
+      curl --request PUT \
+        --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+        --data "process_mode=oldest_first" \
+        "$CI_API_V4_URL/projects/$CI_PROJECT_ID/resource_groups/preview_deploy-$CI_COMMIT_REF_SLUG"
+    # Basic-auth hash for nginx preview protection
+    - export PREVIEW_PASS_HASH=$(htpasswd -nb "$PREVIEW_USER" "$PREVIEW_PASS" | sed -e 's/\$/\$\$/g')
+    # Generate a fresh RSA key pair per preview environment
+    - openssl genpkey -algorithm RSA -out private.pem -pkeyopt rsa_keygen_bits:2048
+    - openssl rsa -pubout -in private.pem -out public.pem
+    - export JWT_PRIVATE_KEY=$(awk 'NF {sub(/\r/, ""); printf "%s\\n",$0;}' private.pem | sed 's/\$/\$\$/g' | sed 's/\\n/\n/g')
+    - export JWT_PUBLIC_KEY=$(awk  'NF {sub(/\r/, ""); printf "%s\\n",$0;}' public.pem  | sed 's/\$/\$\$/g' | sed 's/\\n/\n/g')
+    - rm -f private.pem public.pem
+    - !reference [.tpl_extract_service, script]
+    - !reference [.tpl_resolve_tags_preview, script]
+  script:
+    - !reference [.tpl_deploy_compose_preview, script]
+    - |
+      echo "=============================="
+      echo " Preview deployed!"
+      echo " URL:   $FRONTEND_URL"
+      echo " Login: $PREVIEW_USER / $PREVIEW_PASS"
+      echo "=============================="
+  environment:
+    name: "Preview for branch $CI_COMMIT_REF_SLUG"
+    url: $FRONTEND_URL
+    auto_stop_in: 30 days
+    on_stop: preview_stop
+    deployment_tier: staging
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+preview_stop:
+  retry: 2
+
+  variables:
+    GIT_STRATEGY: none
+    DEPLOY_DIR: $BASE_DIR_PATH/preview/$CI_COMMIT_REF_SLUG
+
+  stage: preview
+  image: alpine:3.23.3
+
+  needs:
+    - job: deploy_preview
+      artifacts: false
+
+  when: manual
+  manual_confirmation: "This will stop your application. Are you sure you want to do it?"
+
+  before_script:
+    - !reference [.tpl_ssh_setup, script]
+  script:
+    - |
+      ssh $DEPLOY_USER@$DEPLOY_HOST "
+        echo '$CI_REGISTRY_PASSWORD' | docker login \
+          -u '$CI_REGISTRY_USER' --password-stdin $CI_REGISTRY
+        cd $DEPLOY_DIR
+        docker compose down -v --remove-orphans --rmi all
+        rm -rf $DEPLOY_DIR
+      "
+  resource_group: preview_deploy-$CI_COMMIT_REF_SLUG
+  environment:
+    name: "Preview for branch $CI_COMMIT_REF_SLUG"
+    action: stop
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+# ── Production environment ───────────────────
+
+deploy_main:
+
+  variables:
+    GIT_STRATEGY: none
+    DEPLOY_DIR: $BASE_DIR_PATH/deploy
+    DEPLOY_NETWORK_NAME: production_deploy
+    NETWORK_NAME: $CI_COMMIT_REF_SLUG
+    FRONTEND_URL: https://$DOMAIN
+
+  retry: 2
+  resource_group: production
+  stage: production
+  image: alpine:3.23.3
+  needs:
+    - job: docker_build_frontend
+      artifacts: false
+    - job: docker_build_backend
+      artifacts: false
+    - job: prepare_compose
+      artifacts: true
+
+  before_script:
+    - !reference [.tpl_ssh_setup, script]
+    - |
+      curl --request PUT \
+        --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+        --data "process_mode=oldest_first" \
+        "$CI_API_V4_URL/projects/$CI_PROJECT_ID/resource_groups/production"
+
+    - !reference [.tpl_extract_service, script]
+    - !reference [.tpl_resolve_tags_production, script]
+  script:
+    - export JWT_PRIVATE_KEY=$(echo "$JWT_PRIVATE_KEY_B64" | base64 -d)
+    - export JWT_PUBLIC_KEY=$(echo "$JWT_PUBLIC_KEY_B64" | base64 -d)
+    - !reference [.tpl_deploy_compose_production, script]
+    - |
+      echo "=============================="
+      echo " Production deployed!"
+      echo " URL:   $FRONTEND_URL"
+      echo "=============================="
+  environment:
+    name: "VOKIMI DEPLOY"
+    url: $FRONTEND_URL
+    deployment_tier: production
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
+      when: never
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# uncomment this if you are using self hosted gitlab runners
+
+# Promotes commit-SHA images to main-stable (and rotates previous-stable).
+# tag_stable_images:
+#   retry: 2
+#   stage: production
+#   image: ${CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX}/docker:29.3.1-cli-alpine3.23
+#   needs:
+#     - job: deploy_main
+#       artifacts: false
+#   variables:
+#     GIT_STRATEGY: none
+#     DOCKER_HOST: unix:///var/run/docker.sock
+#   script:
+#      - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login -u "$CI_DEPENDENCY_PROXY_USER" --password-stdin $CI_DEPENDENCY_PROXY_SERVER
+#      - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
+#     - !reference [.tpl_tag_stable_images, script]
+#   rules:
+    # - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
+    #   when: never
+#     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# uncomment this if you are using gitlab shared  runners
+tag_stable_images:
+  retry: 2
+  stage: production
+  image: ${CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX}/docker:29.3.1-cli-alpine3.23
+  services:
+    - name: ${CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX}/docker:29.3.1-dind-alpine3.23
+      alias: docker
+  needs:
+    - job: deploy_main
+      artifacts: false
+  variables:
+    GIT_STRATEGY: none
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_CERT_PATH: "/certs/client"
+    DOCKER_TLS_VERIFY: 1
+  script:
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login -u "$CI_DEPENDENCY_PROXY_USER" --password-stdin $CI_DEPENDENCY_PROXY_SERVER
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
+    - !reference [.tpl_tag_stable_images, script]
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
+      when: never
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+rollback_main:
+  retry: 2
+
+  variables:
+    GIT_STRATEGY: none
+    DEPLOY_DIR: $BASE_DIR_PATH/deploy
+    DEPLOY_NETWORK_NAME: production_deploy
+    NETWORK_NAME: main
+    FRONTEND_URL: https://$DOMAIN
+
+  stage: production
+  resource_group: production
+  image: alpine:3.23.3
+  needs:
+    - job: deploy_main
+      artifacts: false
+  when: manual
+  manual_confirmation: "Roll back production to the previous version? The current version will be replaced!"
+    # JWT keys are read from CI/CD variables at runtime — no need to duplicate them here.
+  before_script:
+    - !reference [.tpl_ssh_setup, script]
+  script:
+    - !reference [.tpl_deploy_compose_rollback, script]
+    - |
+      echo "=============================="
+      echo " ROLLBACK complete!"
+      echo " URL: $FRONTEND_URL"
+      echo "=============================="
+  environment:
+    name: "VOKIMI DEPLOY"
+    url: $FRONTEND_URL
+    deployment_tier: production
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
+      when: never
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+

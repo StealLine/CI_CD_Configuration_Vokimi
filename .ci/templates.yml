@@ -1,0 +1,363 @@
+# ─────────────────────────────────────────────
+#  .ci/templates.yml
+#  Reusable script fragments (referenced via !reference).
+#  Nothing here runs on its own — jobs pull these in.
+# ─────────────────────────────────────────────
+ 
+
+# ── SSH setup used by all deploy jobs ───────
+.tpl_ssh_setup:
+  script:
+    - apk add --no-cache openssh-client gettext apache2-utils openssl curl
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    - echo "$PRIVATE_K" | base64 -d > MyKey.pem
+    - chmod 400 MyKey.pem
+    - ssh-keyscan -H $DEPLOY_HOST >> ~/.ssh/known_hosts
+    - chmod 644 ~/.ssh/known_hosts
+    - eval $(ssh-agent)
+    - ssh-add MyKey.pem
+ 
+# ── Extract service name from branch name ───
+#  Sets: $SERVICE_NAME, $IS_FRONTEND, $IS_BACKEND
+.tpl_extract_service:
+  script:
+      - |
+        if [ -n "$CI_COMMIT_BRANCH" ] && [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+          BRANCH_SOURCE=$(echo "$CI_COMMIT_TITLE" \
+            | sed -n "s/.*Merge branch '\\([^']*\\)'.*/\\1/p")
+        else
+          BRANCH_SOURCE="$CI_COMMIT_REF_NAME"
+        fi
+
+        export SERVICE_NAME=$(echo "$BRANCH_SOURCE" \
+          | sed -E 's/^feature-(.+)-[^-]+$/\1/')
+
+        # [ "$SERVICE_NAME" = "$BRANCH_SOURCE" ] && SERVICE_NAME=""
+
+        case "$SERVICE_NAME" in
+          frontend|nginx)
+            export IS_FRONTEND=true ;;
+          auth|albums|tags|user-profiles|voki-comments|voki-ratings|\
+          vokis-catalog|core-voki-creation|general-voki-creation|\
+          general-voki-taking|storage|db-seeder)
+            export IS_BACKEND=true ;;
+          *)
+            echo "No known service detected — full build"
+            export SERVICE_NAME="" ;;
+        esac
+
+        echo "SOURCE_BRANCH=$BRANCH_SOURCE  SERVICE_NAME=$SERVICE_NAME  IS_BACKEND=$IS_BACKEND  IS_FRONTEND=$IS_FRONTEND"
+ 
+# ── Resolve image tags for PREVIEW environment ──
+#  All services default to main-stable; the changed service gets $CI_COMMIT_SHORT_SHA.
+.tpl_resolve_tags_preview:
+  script:
+    - |
+      NEW_TAG=$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA
+ 
+      # Defaults — every service starts on the stable tag
+      TAG_FRONTEND=main-stable         TAG_NGINX=main-stable
+      TAG_AUTH=main-stable             TAG_ALBUMS=main-stable
+      TAG_TAGS=main-stable             TAG_USER_PROFILES=main-stable
+      TAG_VOKI_COMMENTS=main-stable    TAG_VOKI_RATINGS=main-stable
+      TAG_VOKIS_CATALOG=main-stable    TAG_CORE_VOKI_CREATION=main-stable
+      TAG_GENERAL_VOKI_CREATION=main-stable
+      TAG_GENERAL_VOKI_TAKING=main-stable
+      TAG_STORAGE=main-stable          TAG_DB_SEEDER=main-stable
+ 
+      if [ -z "$SERVICE_NAME" ]; then
+        # Full build — bump everything
+        TAG_FRONTEND=$NEW_TAG          TAG_NGINX=$NEW_TAG
+        TAG_AUTH=$NEW_TAG              TAG_ALBUMS=$NEW_TAG
+        TAG_TAGS=$NEW_TAG              TAG_USER_PROFILES=$NEW_TAG
+        TAG_VOKI_COMMENTS=$NEW_TAG     TAG_VOKI_RATINGS=$NEW_TAG
+        TAG_VOKIS_CATALOG=$NEW_TAG     TAG_CORE_VOKI_CREATION=$NEW_TAG
+        TAG_GENERAL_VOKI_CREATION=$NEW_TAG
+        TAG_GENERAL_VOKI_TAKING=$NEW_TAG
+        TAG_STORAGE=$NEW_TAG           TAG_DB_SEEDER=$NEW_TAG
+      else
+        # Single-service build — bump only what changed
+        case "$SERVICE_NAME" in
+          frontend)              TAG_FRONTEND=$NEW_TAG ;;
+          nginx)                 TAG_NGINX=$NEW_TAG ;;
+          auth)                  TAG_AUTH=$NEW_TAG ;;
+          albums)                TAG_ALBUMS=$NEW_TAG ;;
+          tags)                  TAG_TAGS=$NEW_TAG ;;
+          user-profiles)         TAG_USER_PROFILES=$NEW_TAG ;;
+          voki-comments)         TAG_VOKI_COMMENTS=$NEW_TAG ;;
+          voki-ratings)          TAG_VOKI_RATINGS=$NEW_TAG ;;
+          vokis-catalog)         TAG_VOKIS_CATALOG=$NEW_TAG ;;
+          core-voki-creation)    TAG_CORE_VOKI_CREATION=$NEW_TAG ;;
+          general-voki-creation) TAG_GENERAL_VOKI_CREATION=$NEW_TAG ;;
+          general-voki-taking)   TAG_GENERAL_VOKI_TAKING=$NEW_TAG ;;
+          storage)               TAG_STORAGE=$NEW_TAG ;;
+          db-seeder)             TAG_DB_SEEDER=$NEW_TAG ;;
+        esac
+      fi
+ 
+      export TAG_FRONTEND TAG_NGINX TAG_AUTH TAG_ALBUMS TAG_TAGS \
+             TAG_USER_PROFILES TAG_VOKI_COMMENTS TAG_VOKI_RATINGS \
+             TAG_VOKIS_CATALOG TAG_CORE_VOKI_CREATION TAG_GENERAL_VOKI_CREATION \
+             TAG_GENERAL_VOKI_TAKING TAG_STORAGE TAG_DB_SEEDER
+ 
+      echo "=== Resolved tags (preview) ==="
+      echo "SERVICE_NAME=${SERVICE_NAME:-<full build>}"
+      env | grep '^TAG_' | sort
+ 
+# ── Resolve image tags for PRODUCTION environment ──
+#  Reads current_tags.env from the server so unchanged services keep their live tags.
+.tpl_resolve_tags_production:
+  script:
+    - |
+      NEW_TAG=$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA
+ 
+      if [ -z "$SERVICE_NAME" ]; then
+        # Full build — everything gets the new tag
+        TAG_FRONTEND=$NEW_TAG          TAG_NGINX=$NEW_TAG
+        TAG_AUTH=$NEW_TAG              TAG_ALBUMS=$NEW_TAG
+        TAG_TAGS=$NEW_TAG              TAG_USER_PROFILES=$NEW_TAG
+        TAG_VOKI_COMMENTS=$NEW_TAG     TAG_VOKI_RATINGS=$NEW_TAG
+        TAG_VOKIS_CATALOG=$NEW_TAG     TAG_CORE_VOKI_CREATION=$NEW_TAG
+        TAG_GENERAL_VOKI_CREATION=$NEW_TAG
+        TAG_GENERAL_VOKI_TAKING=$NEW_TAG
+        TAG_STORAGE=$NEW_TAG           TAG_DB_SEEDER=$NEW_TAG
+      else
+        # Read currently-deployed tags from server; fall back to main-stable
+        REMOTE_TAGS=$(ssh $DEPLOY_USER@$DEPLOY_HOST \
+          "cat $DEPLOY_DIR/current_tags.env 2>/dev/null || echo ''")
+ 
+        #if [ -n "$REMOTE_TAGS" ]; then
+          echo ">>> Reading current tags from server:"
+          echo "$REMOTE_TAGS"
+          eval "$REMOTE_TAGS"
+        #fi
+
+        #else
+        #echo ">>> current_tags.env not found — falling back to main-stable"
+        #TAG_FRONTEND=main-stable         TAG_NGINX=main-stable
+        #TAG_AUTH=main-stable             TAG_ALBUMS=main-stable
+        #TAG_TAGS=main-stable             TAG_USER_PROFILES=main-stable
+        #TAG_VOKI_COMMENTS=main-stable    TAG_VOKI_RATINGS=main-stable
+        #TAG_VOKIS_CATALOG=main-stable    TAG_CORE_VOKI_CREATION=main-stable
+        #TAG_GENERAL_VOKI_CREATION=main-stable
+        #TAG_GENERAL_VOKI_TAKING=main-stable
+        #TAG_STORAGE=main-stable          TAG_DB_SEEDER=main-stable
+ 
+        # Bump only the changed service
+        case "$SERVICE_NAME" in
+          frontend)              TAG_FRONTEND=$NEW_TAG ;;
+          nginx)                 TAG_NGINX=$NEW_TAG ;;
+          auth)                  TAG_AUTH=$NEW_TAG ;;
+          albums)                TAG_ALBUMS=$NEW_TAG ;;
+          tags)                  TAG_TAGS=$NEW_TAG ;;
+          user-profiles)         TAG_USER_PROFILES=$NEW_TAG ;;
+          voki-comments)         TAG_VOKI_COMMENTS=$NEW_TAG ;;
+          voki-ratings)          TAG_VOKI_RATINGS=$NEW_TAG ;;
+          vokis-catalog)         TAG_VOKIS_CATALOG=$NEW_TAG ;;
+          core-voki-creation)    TAG_CORE_VOKI_CREATION=$NEW_TAG ;;
+          general-voki-creation) TAG_GENERAL_VOKI_CREATION=$NEW_TAG ;;
+          general-voki-taking)   TAG_GENERAL_VOKI_TAKING=$NEW_TAG ;;
+          storage)               TAG_STORAGE=$NEW_TAG ;;
+          db-seeder)             TAG_DB_SEEDER=$NEW_TAG ;;
+        esac
+      fi
+ 
+      export TAG_FRONTEND TAG_NGINX TAG_AUTH TAG_ALBUMS TAG_TAGS \
+             TAG_USER_PROFILES TAG_VOKI_COMMENTS TAG_VOKI_RATINGS \
+             TAG_VOKIS_CATALOG TAG_CORE_VOKI_CREATION TAG_GENERAL_VOKI_CREATION \
+             TAG_GENERAL_VOKI_TAKING TAG_STORAGE TAG_DB_SEEDER
+ 
+      echo "=== Resolved tags (production) ==="
+      echo "SERVICE_NAME=${SERVICE_NAME:-<full build>}"
+      env | grep '^TAG_' | sort
+ 
+# ── Tag images as main-stable after successful production deploy ──
+.tpl_tag_stable_images:
+  script:
+    - |
+      echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
+ 
+      SERVICES="auth albums tags user-profiles voki-comments voki-ratings \
+        vokis-catalog core-voki-creation general-voki-creation general-voki-taking \
+        db-seeder storage frontend nginx"
+ 
+      for SVC in $SERVICES; do
+        if docker pull $CI_REGISTRY_IMAGE/${SVC}:$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA > /dev/null 2>&1; then
+          echo ">>> $SVC changed — updating stable"
+ 
+          # Rotate: current stable → previous-stable
+          docker pull $CI_REGISTRY_IMAGE/${SVC}:main-stable || true
+          if docker image inspect $CI_REGISTRY_IMAGE/${SVC}:main-stable > /dev/null 2>&1; then
+            docker tag  $CI_REGISTRY_IMAGE/${SVC}:main-stable \
+                        $CI_REGISTRY_IMAGE/${SVC}:main-previous-stable
+            docker push $CI_REGISTRY_IMAGE/${SVC}:main-previous-stable
+          fi
+ 
+          # Promote commit SHA → stable
+          docker tag  $CI_REGISTRY_IMAGE/${SVC}:$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA \
+                      $CI_REGISTRY_IMAGE/${SVC}:main-stable
+          docker push $CI_REGISTRY_IMAGE/${SVC}:main-stable
+        else
+          echo ">>> $SVC unchanged — skipping"
+        fi
+      done
+ 
+# ── envsubst variable list (shared by preview & production) ──
+.tpl_subst_vars:
+  script:
+    - |
+      export SUBST_VARS='\
+        $${CI_REGISTRY_IMAGE} $${CI_COMMIT_SHORT_SHA} \
+        $${DEPLOY_NETWORK_NAME} $${NETWORK_NAME} $${FRONTEND_URL} $${PREVIEW_PASS_HASH} \
+        $${JWT_PRIVATE_KEY} $${JWT_PUBLIC_KEY} \
+        $${EMAIL_HOST} $${EMAIL_PORT} $${EMAIL_USERNAME} $${EMAIL_PASSWORD} \
+        $${POSTGRES_PASSWORD} $${POSTGRES_USER} \
+        $${RABBITMQ_USER} $${RABBITMQ_PASSWORD} \
+        $${S3_ACCESS_KEY} $${S3_SECRET_KEY} $${S3_SERVICE_URL} \
+        $${TAG_FRONTEND} $${TAG_NGINX} $${TAG_AUTH} $${TAG_ALBUMS} \
+        $${TAG_TAGS} $${TAG_USER_PROFILES} $${TAG_VOKI_COMMENTS} \
+        $${TAG_VOKI_RATINGS} $${TAG_VOKIS_CATALOG} $${TAG_CORE_VOKI_CREATION} \
+        $${TAG_GENERAL_VOKI_CREATION} $${TAG_GENERAL_VOKI_TAKING} \
+        $${TAG_STORAGE} $${TAG_DB_SEEDER} $${DOMAIN}'
+ 
+# ── Deploy via docker compose (preview) ──
+.tpl_deploy_compose_preview:
+  script:
+    - !reference [.tpl_subst_vars, script]
+    - |
+      envsubst "$SUBST_VARS" < compose-preview.yml > compose.yml
+      echo "=== Generated compose.yml ===" && cat compose.yml
+ 
+      ssh $DEPLOY_USER@$DEPLOY_HOST "mkdir -p $DEPLOY_DIR"
+      scp compose.yml $DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_DIR/compose.yml
+ 
+      ssh $DEPLOY_USER@$DEPLOY_HOST "
+        set -e
+        cd $DEPLOY_DIR
+        echo '$CI_REGISTRY_PASSWORD' | docker login \
+          -u '$CI_REGISTRY_USER' --password-stdin $CI_REGISTRY
+        docker compose pull
+        docker compose up -d
+        docker image prune -f
+      "
+ 
+# ── Deploy via docker compose (production, supports single-service deploy) ──
+.tpl_deploy_compose_production:
+  script:
+    - !reference [.tpl_subst_vars, script]
+    - |
+      envsubst "$SUBST_VARS" < compose-prod.yml > compose.yml
+ 
+      # Write current tag snapshot
+      cat > current_tags.env <<EOF
+      TAG_FRONTEND=$TAG_FRONTEND
+      TAG_NGINX=$TAG_NGINX
+      TAG_AUTH=$TAG_AUTH
+      TAG_ALBUMS=$TAG_ALBUMS
+      TAG_TAGS=$TAG_TAGS
+      TAG_USER_PROFILES=$TAG_USER_PROFILES
+      TAG_VOKI_COMMENTS=$TAG_VOKI_COMMENTS
+      TAG_VOKI_RATINGS=$TAG_VOKI_RATINGS
+      TAG_VOKIS_CATALOG=$TAG_VOKIS_CATALOG
+      TAG_CORE_VOKI_CREATION=$TAG_CORE_VOKI_CREATION
+      TAG_GENERAL_VOKI_CREATION=$TAG_GENERAL_VOKI_CREATION
+      TAG_GENERAL_VOKI_TAKING=$TAG_GENERAL_VOKI_TAKING
+      TAG_STORAGE=$TAG_STORAGE
+      TAG_DB_SEEDER=$TAG_DB_SEEDER
+      EOF
+ 
+      # Rotate previous state on server before overwriting
+      ssh $DEPLOY_USER@$DEPLOY_HOST "
+        mkdir -p $DEPLOY_DIR && cd $DEPLOY_DIR
+        [ -f compose.yml ]      && cp compose.yml      compose.previous.yml || true
+        [ -f current_tags.env ] && cp current_tags.env previous_tags.env    || true
+        [ -f deployed_sha ]     && cp deployed_sha     previous_deployed_sha || true
+      "
+      echo "$CI_COMMIT_SHA" | ssh $DEPLOY_USER@$DEPLOY_HOST "cat > $DEPLOY_DIR/deployed_sha"
+      scp compose.yml      $DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_DIR/compose.yml
+      scp current_tags.env $DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_DIR/current_tags.env
+ 
+      # Map service name → compose service name
+      CHANGED_SVCS=""
+      if [ -n "$SERVICE_NAME" ]; then
+        case "$SERVICE_NAME" in
+          frontend) CHANGED_SVCS="frontend" ;;
+          nginx)    CHANGED_SVCS="nginx" ;;
+          storage)  CHANGED_SVCS="vokimi-storage-service" ;;
+          *)        CHANGED_SVCS="${SERVICE_NAME}-service" ;;
+        esac
+      fi
+ 
+      ssh $DEPLOY_USER@$DEPLOY_HOST "
+        set -e
+        cd $DEPLOY_DIR
+        echo '$CI_REGISTRY_PASSWORD' | docker login \
+          -u '$CI_REGISTRY_USER' --password-stdin $CI_REGISTRY
+ 
+        CHANGED_SVCS='${CHANGED_SVCS}'
+        if [ -n \"\$CHANGED_SVCS\" ]; then
+          echo '>>> Targeted deploy:' \"\$CHANGED_SVCS\"
+          docker compose pull \"\$CHANGED_SVCS\"
+          docker compose up -d --no-deps \"\$CHANGED_SVCS\"
+        else
+          echo '>>> Full deploy'
+          docker compose pull
+          docker compose up -d
+        fi
+        docker image prune -f
+      "
+ 
+# ── Rollback production to previous compose state ──
+.tpl_deploy_compose_rollback:
+  script:
+    - |
+      ssh $DEPLOY_USER@$DEPLOY_HOST "
+        set -e
+        cd $DEPLOY_DIR
+ 
+        if [ ! -f compose.previous.yml ]; then
+          echo 'ERROR: compose.previous.yml does not exist — rollback impossible'
+          exit 1
+        fi
+
+        DEPLOYED_SHA=$(cat deployed_sha 2>/dev/null || echo '')
+        if [ -n "$DEPLOYED_SHA" ] && [ "$DEPLOYED_SHA" != '$CI_COMMIT_SHA' ]; then
+          echo 'ROLLBACK BLOCKED — A newer deployment is already active.'
+          exit 1
+        fi
+ 
+        # Back up current state just in case
+        cp compose.yml      compose.current_backup.yml
+        cp current_tags.env current_tags_backup.env 2>/dev/null || true
+ 
+        # Restore previous state
+        cp compose.previous.yml compose.yml
+        cp previous_tags.env    current_tags.env
+        cp previous_deployed_sha deployed_sha 2>/dev/null || true
+ 
+        echo '$CI_REGISTRY_PASSWORD' | docker login \
+          -u '$CI_REGISTRY_USER' --password-stdin $CI_REGISTRY
+        echo '>>> Rolling back to previous version'
+        docker compose pull
+        docker compose up -d
+        docker image prune -f
+      "
+
+.tpl_docker_build_push:
+  script:
+    - |
+      docker_build_push() {
+        export DOCKER_BUILDKIT=1
+
+        local SVC=$1 FILE=$2
+        docker pull $CI_REGISTRY_IMAGE/${SVC}:main-stable || true
+
+        docker build \
+          --build-arg SERVICE=$SVC \
+          --build-arg BUILDKIT_INLINE_CACHE=1 \
+          --cache-from $CI_REGISTRY_IMAGE/${SVC}:main-stable \
+          -t $CI_REGISTRY_IMAGE/${SVC}:$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA \
+          -f $FILE .
+
+        docker push $CI_REGISTRY_IMAGE/${SVC}:$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA
+      }

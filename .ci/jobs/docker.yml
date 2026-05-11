@@ -1,0 +1,180 @@
+# ─────────────────────────────────────────────
+#  .ci/jobs/docker.yml
+#  Stage: build_docker
+# ─────────────────────────────────────────────
+
+## uncomment this jobs if you want to run your own gitlab runner, 
+##type of gitlab runner must be docker executor
+
+# docker_build_backend:
+#   retry: 2
+#   stage: build_docker
+#   needs:
+#     - job: build_backend
+#       artifacts: true
+#   image: ${CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX}/docker:29.3.1-cli-alpine3.23
+#   variables:
+#     DOCKER_HOST: unix:///var/run/docker.sock
+#     GIT_STRATEGY: none
+#   before_script:
+#     - !reference [.tpl_extract_service, script]
+#   script:
+#     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
+#     - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login -u "$CI_DEPENDENCY_PROXY_USER" --password-stdin $CI_DEPENDENCY_PROXY_SERVER
+#     - !reference [.tpl_docker_build_push, script]
+#     - |
+#       if [ -n "$IS_BACKEND" ] && [ -n "$SERVICE_NAME" ]; then
+#         FILE=$([ "$SERVICE_NAME" = "storage" ] && echo "Dockerfile.storage" || echo "Dockerfile.backend")
+#         docker_build_push "$SERVICE_NAME" "$FILE"
+#       else
+#         for PAIR in \
+#           "auth:Dockerfile.backend"              "albums:Dockerfile.backend" \
+#           "tags:Dockerfile.backend"              "user-profiles:Dockerfile.backend" \
+#           "voki-comments:Dockerfile.backend"     "voki-ratings:Dockerfile.backend" \
+#           "vokis-catalog:Dockerfile.backend"     "core-voki-creation:Dockerfile.backend" \
+#           "general-voki-creation:Dockerfile.backend" \
+#           "general-voki-taking:Dockerfile.backend" \
+#           "db-seeder:Dockerfile.backend"         "storage:Dockerfile.storage"
+#         do
+#           docker_build_push "${PAIR%%:*}" "${PAIR##*:}"
+#         done
+#       fi
+#   rules:
+    # - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
+    #   when: never
+#     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+#     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_COMMIT_REF_NAME !~ /^feature-(frontend|nginx)-.+/'
+#     - when: never
+
+# docker_build_frontend:
+#   retry: 2
+#   stage: build_docker
+#   needs:
+#     - job: build_frontend
+#       artifacts: true
+#   image: ${CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX}/docker:29.3.1-cli-alpine3.23
+#   variables:
+#     DOCKER_HOST: unix:///var/run/docker.sock
+#     GIT_STRATEGY: none
+#   before_script:
+#     - !reference [.tpl_extract_service, script]
+#     - |
+#       if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+#         mv nginx-prod.conf nginx.conf
+#       else
+#         mv nginx-preview.conf nginx.conf
+#       fi
+#   script:
+#     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
+#     - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login -u "$CI_DEPENDENCY_PROXY_USER" --password-stdin $CI_DEPENDENCY_PROXY_SERVER#     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
+#     - !reference [.tpl_docker_build_push, script]
+#     - |
+#       if [ -n "$IS_FRONTEND" ] && [ -n "$SERVICE_NAME" ]; then
+#         FILE=$([ "$SERVICE_NAME" = "nginx" ] && echo "Dockerfile.nginx" || echo "Dockerfile.frontend")
+#         docker_build_push "$SERVICE_NAME" "$FILE"
+#       else
+#         docker_build_push "frontend" "Dockerfile.frontend"
+#         docker_build_push "nginx"    "Dockerfile.nginx"
+#       fi
+#   rules:
+    # - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
+    #   when: never
+#     - if: '$CI_COMMIT_REF_NAME =~ /^feature-(auth|albums|tags|user-profiles|voki-comments|voki-ratings|vokis-catalog|core-voki-creation|general-voki-creation|general-voki-taking|storage|db-seeder)-[^-]+/'
+#       when: never
+#     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+#     - when: always
+
+
+## uncomment this jobs if you are using gitlab shared runners
+
+docker_build_backend:
+  retry: 2
+  stage: build_docker
+  needs:
+    - job: build_backend
+      artifacts: true
+  image: ${CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX}/docker:29.3.1-cli-alpine3.23
+  services:
+    - name: ${CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX}/docker:29.3.1-dind-alpine3.23
+      alias: docker
+  variables:
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_CERT_PATH: "/certs/client"
+    DOCKER_TLS_VERIFY: 1
+    GIT_STRATEGY: none
+  before_script:
+    - !reference [.tpl_extract_service, script]
+  script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login -u "$CI_DEPENDENCY_PROXY_USER" --password-stdin $CI_DEPENDENCY_PROXY_SERVER
+    - !reference [.tpl_docker_build_push, script]
+    - |
+      if [ -n "$IS_BACKEND" ] && [ -n "$SERVICE_NAME" ]; then
+        FILE=$([ "$SERVICE_NAME" = "storage" ] && echo "Dockerfile.storage" || echo "Dockerfile.backend")
+        docker_build_push "$SERVICE_NAME" "$FILE"
+      else
+        for PAIR in \
+          "auth:Dockerfile.backend"              "albums:Dockerfile.backend" \
+          "tags:Dockerfile.backend"              "user-profiles:Dockerfile.backend" \
+          "voki-comments:Dockerfile.backend"     "voki-ratings:Dockerfile.backend" \
+          "vokis-catalog:Dockerfile.backend"     "core-voki-creation:Dockerfile.backend" \
+          "general-voki-creation:Dockerfile.backend" \
+          "general-voki-taking:Dockerfile.backend" \
+          "db-seeder:Dockerfile.backend"         "storage:Dockerfile.storage"
+        do
+          docker_build_push "${PAIR%%:*}" "${PAIR##*:}"
+        done
+      fi
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
+      when: never
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_COMMIT_REF_NAME !~ /^feature-(frontend|nginx)-.+/'
+    - when: never
+
+docker_build_frontend:
+  retry: 2
+  stage: build_docker
+  needs:
+    - job: build_frontend
+      artifacts: true
+  image: ${CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX}/docker:29.3.1-cli-alpine3.23
+  services:
+    - name: ${CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX}/docker:29.3.1-dind-alpine3.23
+      alias: docker
+  variables:
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_CERT_PATH: "/certs/client"
+    DOCKER_TLS_VERIFY: 1
+    GIT_STRATEGY: none
+  before_script:
+    - !reference [.tpl_extract_service, script]
+    - |
+      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+        mv nginx-prod.conf nginx.conf
+      else
+        mv nginx-preview.conf nginx.conf
+      fi
+  script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
+    - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login -u "$CI_DEPENDENCY_PROXY_USER" --password-stdin $CI_DEPENDENCY_PROXY_SERVER
+    - !reference [.tpl_docker_build_push, script]
+    - |
+      if [ -n "$IS_FRONTEND" ] && [ -n "$SERVICE_NAME" ]; then
+        FILE=$([ "$SERVICE_NAME" = "nginx" ] && echo "Dockerfile.nginx" || echo "Dockerfile.frontend")
+        docker_build_push "$SERVICE_NAME" "$FILE"
+      else
+        docker_build_push "frontend" "Dockerfile.frontend"
+        docker_build_push "nginx"    "Dockerfile.nginx"
+      fi
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
+      when: never
+    - if: '$CI_COMMIT_REF_NAME =~ /^feature-(auth|albums|tags|user-profiles|voki-comments|voki-ratings|vokis-catalog|core-voki-creation|general-voki-creation|general-voki-taking|storage|db-seeder)-[^-]+/'
+      when: never
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - when: always
+
+
