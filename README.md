@@ -1,3 +1,5 @@
+# Documentation and overall project is still in progress!
+
 # CI/CD Pipeline — Configuration Project
 
 > **Note:** this repo just explains the pipeline logic and features. If you want to simply setup the application go to [DEVOPS_WORKFLOW_MICROSERVICES](https://github.com/StealLine/DEVOPS_WORKFLOW_MICROSERVICES)
