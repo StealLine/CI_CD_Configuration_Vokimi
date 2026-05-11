@@ -145,7 +145,6 @@ More about Docker Compose files and app structure → [Voki Application reposito
 Most deployment logic lives in `deploy.yml`.
 
 ![Production deploy](images/image-6.png)
-
 ---
 
 ### 4 — One-Click Rollback
