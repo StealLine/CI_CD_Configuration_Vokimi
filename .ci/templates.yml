@@ -3,7 +3,12 @@
 #  Reusable script fragments (referenced via !reference).
 #  Nothing here runs on its own — jobs pull these in.
 # ─────────────────────────────────────────────
- 
+
+.skip-on-schedule:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+
 
 # ── SSH setup used by all deploy jobs ───────
 .tpl_ssh_setup:

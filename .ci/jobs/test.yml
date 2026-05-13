@@ -31,6 +31,7 @@ gitleaks:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
       when: never
+    - !reference [.skip-on-schedule, rules]
     - when: always
 
 trivy_image_scan:
@@ -128,6 +129,7 @@ trivy_image_scan:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
       when: never
+    - !reference [.skip-on-schedule, rules]
     - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
 
   interruptible: true
@@ -168,6 +170,7 @@ trivy_image_scan:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
       when: never
+    - !reference [.skip-on-schedule, rules]
     - if: $CI_COMMIT_BRANCH == 'main'
     
   interruptible: true

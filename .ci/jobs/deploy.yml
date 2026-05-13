@@ -28,6 +28,7 @@ init_images:
       fi
   rules:
     - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
+    - !reference [.skip-on-schedule, rules]
 
 # ── Preview environment ──────────────────────
 
@@ -104,6 +105,7 @@ deploy_preview:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
       when: never
+    - !reference [.skip-on-schedule, rules]
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 
 preview_stop:
@@ -141,6 +143,7 @@ preview_stop:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
       when: never
+    - !reference [.skip-on-schedule, rules]
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 
 # ── Production environment ───────────────────
@@ -192,6 +195,7 @@ deploy_main:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
       when: never
+    - !reference [.skip-on-schedule, rules]
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 # uncomment this if you are using self hosted gitlab runners
@@ -211,10 +215,11 @@ deploy_main:
 #      - echo "$CI_DEPENDENCY_PROXY_PASSWORD" | docker login -u "$CI_DEPENDENCY_PROXY_USER" --password-stdin $CI_DEPENDENCY_PROXY_SERVER
 #      - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
 #     - !reference [.tpl_tag_stable_images, script]
-#   rules:
-    # - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
-    #   when: never
-#     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  # rules:
+  #   - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
+  #     when: never
+  #   - !reference [.skip-on-schedule, rules]
+  #   - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 # uncomment this if you are using gitlab shared  runners
 tag_stable_images:
@@ -240,6 +245,7 @@ tag_stable_images:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
       when: never
+    - !reference [.skip-on-schedule, rules]
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 rollback_main:
@@ -277,6 +283,7 @@ rollback_main:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
       when: never
+    - !reference [.skip-on-schedule, rules]
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 
