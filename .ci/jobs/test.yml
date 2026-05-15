@@ -49,16 +49,10 @@ trivy_image_scan:
     paths:
       - .trivycache/
 
-  before_script:
-    - !reference [.tpl_extract_service, script]
-
   script:
     - |
-      if [ -z "$SERVICE_NAME" ]; then
-        SERVICES_TO_SCAN="auth albums tags user-profiles voki-comments voki-ratings vokis-catalog core-voki-creation general-voki-creation general-voki-taking storage db-seeder frontend nginx"
-      else
-        SERVICES_TO_SCAN="$SERVICE_NAME"
-      fi
+      SERVICES_TO_SCAN="auth albums tags user-profiles voki-comments voki-ratings vokis-catalog core-voki-creation general-voki-creation general-voki-taking storage db-seeder frontend nginx"
+ 
 
       echo "$CI_REGISTRY_PASSWORD" | trivy registry login \
         --username "$CI_REGISTRY_USER" \
@@ -69,17 +63,18 @@ trivy_image_scan:
       for SERVICE in $SERVICES_TO_SCAN; do
         echo "=== Scanning $SERVICE ==="
         trivy image \
-          --severity HIGH,CRITICAL \
+          --severity HIGH,CRITICAL,MEDIUM \
           --ignore-unfixed \
           --format template \
           --template "@gitlab.tpl" \
           -o "gl-container-scanning-report-$SERVICE.json" \
-          "$CI_REGISTRY_IMAGE/$SERVICE:$CI_COMMIT_REF_SLUG" || true
+          "$CI_REGISTRY_IMAGE/$SERVICE:main-stable" || true
       done
 
   artifacts:
-    reports:
-      container_scanning: gl-container-scanning-report.json
+    paths:
+      - "gl-container-scanning-report-*.json"
+    when: always
 
   allow_failure: true
   interruptible: true
