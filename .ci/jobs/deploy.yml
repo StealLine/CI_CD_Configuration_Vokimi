@@ -27,8 +27,8 @@ init_images:
         echo "DOTNET not set, skipping"
       fi
   rules:
-    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
     - !reference [.skip-on-schedule, rules]
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
 
 # ── Preview environment ──────────────────────
 
