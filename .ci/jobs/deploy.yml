@@ -115,8 +115,8 @@ deploy_preview:
     # Generate a fresh RSA key pair per preview environment
     - openssl genpkey -algorithm RSA -out private.pem -pkeyopt rsa_keygen_bits:2048
     - openssl rsa -pubout -in private.pem -out public.pem
-    - export JWT_PRIVATE_KEY=$(awk 'NF {sub(/\r/, ""); printf "%s\\n",$0;}' private.pem | sed 's/\$/\$\$/g' | sed 's/\\n/\n/g')
-    - export JWT_PUBLIC_KEY=$(awk  'NF {sub(/\r/, ""); printf "%s\\n",$0;}' public.pem  | sed 's/\$/\$\$/g' | sed 's/\\n/\n/g')
+    - export JWT_PRIVATE_KEY_PREVIEW=$(awk 'NF {sub(/\r/, ""); printf "%s\\n",$0;}' private.pem | sed 's/\$/\$\$/g' | sed 's/\\n/\n/g')
+    - export JWT_PUBLIC_KEY_PREVIEW=$(awk  'NF {sub(/\r/, ""); printf "%s\\n",$0;}' public.pem  | sed 's/\$/\$\$/g' | sed 's/\\n/\n/g')
     - rm -f private.pem public.pem
     - !reference [.tpl_extract_service, script]
     - !reference [.tpl_resolve_tags_preview, script]
