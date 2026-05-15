@@ -40,11 +40,11 @@
 #         done
 #       fi
 #   rules:
-    # - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    # - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_COMMIT_REF_NAME !~ /^feature-(frontend|nginx)-.+/'
     # - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
     #   when: never
     # - !reference [.skip-on-schedule, rules]
+    # - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    # - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_COMMIT_REF_NAME !~ /^feature-(frontend|nginx)-.+/'
     # - when: never
 
 # docker_build_frontend:
@@ -129,11 +129,11 @@ docker_build_backend:
         done
       fi
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_COMMIT_REF_NAME !~ /^feature-(frontend|nginx)-.+/'
     - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
       when: never
     - !reference [.skip-on-schedule, rules]
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_COMMIT_REF_NAME !~ /^feature-(frontend|nginx)-.+/'
     - when: never
 
 docker_build_frontend:
