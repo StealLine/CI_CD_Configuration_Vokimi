@@ -77,7 +77,6 @@ trivy_image_scan:
     when: always
 
   allow_failure: true
-  interruptible: true
 
   rules:
     - if: '$CI_PIPELINE_SOURCE == "schedule"'
