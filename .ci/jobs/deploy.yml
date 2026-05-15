@@ -7,14 +7,46 @@
 
 # Pulls a new base .NET image 
 # Triggered manually from the web UI with $DOTNET set to the desired image.
+# uncomment this if you are using self hosted gitlab runners
+
+# init_images:
+#   needs: []
+#   stage: images_init
+#   image: ${CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX}/docker:29.3.1-cli-alpine3.23
+#   services:
+#     - ${CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX}/docker:29.3.1-dind-alpine3.23
+#   variables:
+#     GIT_STRATEGY: none
+#     DOCKER_HOST: unix:///var/run/docker.sock
+#   script:
+#     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
+#     - |
+#       if [ -n "$DOTNET" ]; then
+#         echo "Pulling $DOTNET"
+#         docker pull "$DOTNET"
+#         docker tag "$DOTNET" "$CI_REGISTRY_IMAGE/images:dotnet_latest"
+#         docker push "$CI_REGISTRY_IMAGE/images:dotnet_latest"
+#       else
+#         echo "DOTNET not set, skipping"
+#       fi
+#   rules:
+#     - !reference [.skip-on-schedule, rules]
+#     - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main" && $DOTNET'
+
+# uncomment this if you are using gitlab shared runners
 init_images:
   needs: []
   stage: images_init
   image: ${CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX}/docker:29.3.1-cli-alpine3.23
   services:
-    - ${CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX}/docker:29.3.1-dind-alpine3.23
+    - name: ${CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX}/docker:29.3.1-dind-alpine3.23
+      alias: docker
   variables:
     GIT_STRATEGY: none
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_CERT_PATH: "/certs/client"
+    DOCKER_TLS_VERIFY: 1
   script:
     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
     - |
