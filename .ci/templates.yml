@@ -224,11 +224,28 @@
         $${TAG_VOKI_RATINGS} $${TAG_VOKIS_CATALOG} $${TAG_CORE_VOKI_CREATION} \
         $${TAG_GENERAL_VOKI_CREATION} $${TAG_GENERAL_VOKI_TAKING} \
         $${TAG_STORAGE} $${TAG_DB_SEEDER} $${DOMAIN}'
+
+.tpl_subst_vars_preview:
+  script:
+    - |
+      export SUBST_VARS='\
+        $${CI_REGISTRY_IMAGE} $${CI_COMMIT_SHORT_SHA} \
+        $${DEPLOY_NETWORK_NAME} $${NETWORK_NAME} $${FRONTEND_URL} $${PREVIEW_PASS_HASH} \
+        $${JWT_PRIVATE_KEY} $${JWT_PUBLIC_KEY} \
+        $${EMAIL_HOST} $${EMAIL_PORT} $${EMAIL_USERNAME} $${EMAIL_PASSWORD} \
+        $${POSTGRES_PASSWORD_PREVIEW} $${POSTGRES_USER_PREVIEW} \
+        $${RABBITMQ_USER_PREVIEW} $${RABBITMQ_PASSWORD_PREVIEW} \
+        $${S3_ACCESS_KEY_PREVIEW} $${S3_SECRET_KEY_PREVIEW} $${S3_SERVICE_URL_PREVIEW} \
+        $${TAG_FRONTEND} $${TAG_NGINX} $${TAG_AUTH} $${TAG_ALBUMS} \
+        $${TAG_TAGS} $${TAG_USER_PROFILES} $${TAG_VOKI_COMMENTS} \
+        $${TAG_VOKI_RATINGS} $${TAG_VOKIS_CATALOG} $${TAG_CORE_VOKI_CREATION} \
+        $${TAG_GENERAL_VOKI_CREATION} $${TAG_GENERAL_VOKI_TAKING} \
+        $${TAG_STORAGE} $${TAG_DB_SEEDER} $${DOMAIN}'
  
 # ── Deploy via docker compose (preview) ──
 .tpl_deploy_compose_preview:
   script:
-    - !reference [.tpl_subst_vars, script]
+    - !reference [.tpl_subst_vars_preview, script]
     - |
       envsubst "$SUBST_VARS" < compose-preview.yml > compose.yml
       echo "=== Generated compose.yml ===" && cat compose.yml
