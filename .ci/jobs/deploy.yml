@@ -91,15 +91,15 @@ deploy_preview:
     FRONTEND_URL: https://$CI_COMMIT_SHORT_SHA.$DOMAIN
     # Preview uses lightweight local infrastructure
 
-    POSTGRES_PASSWORD: postgres
-    POSTGRES_USER: postgres
+    POSTGRES_PASSWORD_PREVIEW: postgres
+    POSTGRES_USER_PREVIEW: postgres
 
-    RABBITMQ_USER: user
-    RABBITMQ_PASSWORD: password
+    RABBITMQ_USER_PREVIEW: user
+    RABBITMQ_PASSWORD_PREVIEW: password
 
-    S3_ACCESS_KEY: minio
-    S3_SECRET_KEY: minio123
-    S3_SERVICE_URL: http://minio:9000
+    S3_ACCESS_KEY_PREVIEW: minio
+    S3_SECRET_KEY_PREVIEW: minio123
+    S3_SERVICE_URL_PREVIEW: http://minio:9000
 
 
   before_script:
